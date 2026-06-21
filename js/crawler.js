@@ -2,10 +2,46 @@ import { normalizeUrl, formatBytes } from './urlUtils.js';
 import { cloneOnePage, runNavCheck } from './pageCloner.js';
 import { discoverSitemapUrls } from './sitemap.js';
 import { AssetDownloader } from './assetDownloader.js';
-import { ProxyFetcher, sleep } from './proxy.js';
+import { ProxyFetcher, sleep, PROXIES } from './proxy.js';
 
 const PAGE_DELAY_MS = 350;
 const RATE_LIMIT_DELAY_MS = 3000;
+const BLOCK_STATUS_CODES = [403, 401, 429, 503]; // status codes consistent with bot-protection / WAF blocking rather than a generic error
+
+// Tries the root page through the requested proxy first; if that specific
+// fetch fails with a status code typical of bot-protection blocking, retries
+// against the other proxies in the list (skipping the one already tried and
+// "None") before giving up. Returns the proxy prefix that actually worked,
+// or null if every option failed — in which case the caller should treat
+// the run as fully blocked, not as a generic/unknown failure.
+async function findWorkingProxyForRootPage(normalizedUrl, preferredProxyPrefix, log) {
+  const candidates = [preferredProxyPrefix, ...PROXIES.map((p) => p.value).filter((v) => v && v !== preferredProxyPrefix)];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const proxyPrefix = candidates[i];
+    const proxyLabel = PROXIES.find((p) => p.value === proxyPrefix)?.label || '(no proxy)';
+    const probeFetcher = new ProxyFetcher(proxyPrefix, () => {});
+
+    try {
+      const res = await probeFetcher.fetch(normalizedUrl);
+      if (res.ok) {
+        if (i > 0) log('Switched to ' + proxyLabel + ' after the first proxy was blocked — this worked.', 'ok');
+        return { proxyPrefix, status: res.status };
+      }
+      if (BLOCK_STATUS_CODES.includes(res.status)) {
+        log((i === 0 ? '' : 'Also blocked: ') + proxyLabel + ' returned HTTP ' + res.status + ' on the target site — trying another proxy…', 'warn');
+        continue; // try next candidate
+      }
+      // Non-block error (e.g. 404, 500) — switching proxies won't fix this, stop trying.
+      return { proxyPrefix, status: res.status, nonBlockError: true };
+    } catch (err) {
+      log((i === 0 ? '' : 'Also failed: ') + proxyLabel + ': ' + err.message, 'warn');
+      continue;
+    }
+  }
+
+  return null; // every proxy failed with a block-like status
+}
 
 // Runs a full clone: optionally seeds the crawl queue from sitemap.xml,
 // otherwise (or additionally) discovers pages by following same-origin
@@ -19,11 +55,31 @@ export async function runCrawl({ startUrl, options, zip, proxyPrefix, log, onPro
     useSitemap = false,
   } = options;
 
-  const fetcher = new ProxyFetcher(proxyPrefix, (count) => onProgress && onProgress({ requestCount: count }));
-  const downloader = new AssetDownloader(zip, fetcher, log);
-
   const normalized = normalizeUrl(startUrl);
   const origin = new URL(normalized).origin;
+
+  // Before committing to a full crawl, confirm the root page is actually
+  // reachable — and if the chosen proxy is blocked, automatically try the
+  // others rather than burning the whole run on a page that was never
+  // going to load. This is the single most common failure mode (a site
+  // with bot protection rejecting recognized proxy/datacenter traffic).
+  log('Checking root page is reachable…');
+  const probeResult = await findWorkingProxyForRootPage(normalized, proxyPrefix, log);
+
+  if (!probeResult) {
+    const err = new Error('blocked-on-all-proxies');
+    err.isBlocked = true;
+    err.detail = 'The target site rejected every available proxy (HTTP ' + BLOCK_STATUS_CODES.join('/') + ' — typical of bot/WAF protection). This is not a bug in the tool; the site is actively blocking automated/proxy traffic, and switching proxies further is unlikely to help.';
+    throw err;
+  }
+  if (probeResult.nonBlockError) {
+    const err = new Error('HTTP ' + probeResult.status + ' fetching root page');
+    throw err;
+  }
+
+  const effectiveProxyPrefix = probeResult.proxyPrefix;
+  const fetcher = new ProxyFetcher(effectiveProxyPrefix, (count) => onProgress && onProgress({ requestCount: count }));
+  const downloader = new AssetDownloader(zip, fetcher, log);
 
   const visited = new Set([normalized]);
   const queue = [{ url: normalized, depth: 0, isRoot: true }];
@@ -100,6 +156,7 @@ export async function runCrawl({ startUrl, options, zip, proxyPrefix, log, onPro
     assetCount: downloader.assetCount,
     assetBytes: downloader.totalBytes,
     options: { maxPages, maxDepth, followLinks, useSitemap },
+    proxyUsed: effectiveProxyPrefix || '(none)',
     navIssues: navIssues.map((r) => ({ pageUrl: r.pageUrl, deadLinkCount: r.deadLinks.length })),
     note: 'Cloned client-side via browser fetch + CORS proxy. JS-rendered content may be missing.',
   };
@@ -118,5 +175,5 @@ export async function runCrawl({ startUrl, options, zip, proxyPrefix, log, onPro
     '<p>' + pageCount + ' page(s) cloned, ' + downloader.assetCount + ' asset(s), ' + formatBytes(downloader.totalBytes) + ' total.</p>' +
     '<ul>' + indexLinks + '</ul></body></html>');
 
-  return { pageRecords, pageCount, assetCount: downloader.assetCount, totalBytes: downloader.totalBytes, navIssues, manifest, fetcher };
+  return { pageRecords, pageCount, assetCount: downloader.assetCount, totalBytes: downloader.totalBytes, navIssues, manifest, fetcher, proxyUsed: effectiveProxyPrefix };
 }
