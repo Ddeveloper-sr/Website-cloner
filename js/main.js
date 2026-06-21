@@ -195,12 +195,18 @@ startBtn.addEventListener('click', async () => {
       ? 'pages/index.html'
       : (result.pageRecords[0] ? 'pages/' + result.pageRecords[0].pageName : null);
   } catch (err) {
-    setBadge('error', 'error');
-    const hint = (err.message || '').toLowerCase().includes('failed to fetch')
-      ? '\nThis usually means the CORS proxy blocked or timed out the request — try the other proxy option above.'
-      : '';
-    setError('errorMsg', 'Clone failed: ' + err.message + hint);
-    log('Fatal: ' + err.message, 'err');
+    setBadge(err.isBlocked ? 'blocked' : 'error', 'error');
+    setProgress(0, 1, err.isBlocked ? 'blocked' : 'failed');
+    if (err.isBlocked) {
+      setError('errorMsg', 'Site blocked every proxy — this isn\'t a tool bug.\n\n' + err.detail);
+      log('Blocked: ' + err.detail, 'err');
+    } else {
+      const hint = (err.message || '').toLowerCase().includes('failed to fetch')
+        ? '\nThis usually means the CORS proxy blocked or timed out the request — try the other proxy option above.'
+        : '';
+      setError('errorMsg', 'Clone failed: ' + err.message + hint);
+      log('Fatal: ' + err.message, 'err');
+    }
   } finally {
     startBtn.disabled = false;
     startBtn.textContent = 'Clone site';
