@@ -1,6 +1,7 @@
 # Site Cloner (browser-only, v2)
 
 Clones a site's rendered design — HTML, CSS (including animations), images, fonts, scripts — into a downloadable zip, entirely from a browser tab. No backend, no install, no build step. Runs as-is in Spck Editor's static preview or any browser.
+[Support Server](https://discord.gg/jJwrnJAEu9)
 
 Three modes:
 - **Clone** — full site crawl, optionally seeded from `sitemap.xml`, with link-following up to a configurable page/depth limit.
