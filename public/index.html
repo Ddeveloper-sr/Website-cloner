@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Site Cloner (Browser-only)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #0c0e0d;
+    --panel: #131615;
+    --line: #232b27;
+    --ink: #e9eee9;
+    --ink-dim: #8a9690;
+    --signal: #5ef2a3;
+    --signal-dim: #2c5c43;
+    --warn: #f2b35e;
+    --error: #f25e5e;
+    --mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); min-height: 100vh;
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes dotPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(94, 242, 163, 0.5); }
+    50% { opacity: 0.6; box-shadow: 0 0 0 4px rgba(94, 242, 163, 0); }
+  }
+  @keyframes shimmer {
+    0% { background-position: -120px 0; }
+    100% { background-position: 120px 0; }
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .eyebrow, h1, .sub, .panel {
+    animation: fadeUp 0.5s ease both;
+  }
+  .eyebrow { animation-delay: 0s; }
+  h1 { animation-delay: 0.06s; }
+  .sub { animation-delay: 0.12s; }
+  .panel:nth-of-type(1) { animation-delay: 0.18s; }
+  .caveat { animation: fadeUp 0.5s ease 0.24s both; }
+
+  .wrap { max-width: 720px; margin: 0 auto; padding: 32px 18px 60px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+    color: var(--signal); text-transform: uppercase;
+    display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  }
+  .eyebrow .dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--signal);
+    animation: dotPulse 2s ease-in-out infinite;
+  }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 10px; font-weight: 650; }
+  h1 .accent { color: var(--signal); }
+  .sub { color: var(--ink-dim); font-size: 13.5px; line-height: 1.55; margin: 0 0 24px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 18px; margin-bottom: 16px;
+  }
+  label {
+    display: block; font-family: var(--mono); font-size: 10.5px;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--ink-dim); margin-bottom: 7px;
+  }
+  input[type="text"], input[type="url"], select {
+    width: 100%; background: #0a0c0b; border: 1px solid var(--line);
+    border-radius: 7px; color: var(--ink); font-family: var(--mono);
+    font-size: 13px; padding: 11px 12px; outline: none;
+  }
+  select { -webkit-appearance: none; appearance: none; }
+  .proxy-row { display: flex; gap: 8px; }
+  .proxy-row select { flex: 1; }
+  .test-proxy-btn {
+    background: #0a0c0b; border: 1px solid var(--line); color: var(--ink-dim);
+    font-family: var(--mono); font-size: 12.5px; padding: 0 16px;
+    border-radius: 7px; cursor: pointer; white-space: nowrap;
+  }
+  .test-proxy-btn:active { background: var(--line); }
+  .test-proxy-btn:disabled { opacity: 0.6; cursor: default; }
+  .proxy-test-result {
+    font-family: var(--mono); font-size: 11.5px; margin-top: 8px;
+    min-height: 16px; display: none;
+  }
+  .proxy-test-result.ok { color: var(--signal); display: block; }
+  .proxy-test-result.fail { color: var(--error); display: block; }
+  .proxy-test-result.testing { color: var(--ink-dim); display: block; }
+  .field { margin-bottom: 14px; }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .field-row .field { margin-bottom: 14px; }
+  .toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 11px 12px; background: #0a0c0b; border: 1px solid var(--line);
+    border-radius: 7px; margin-bottom: 14px;
+  }
+  .toggle-row .label-group { display: flex; flex-direction: column; gap: 2px; }
+  .toggle-row .label-group span:first-child { font-size: 12.5px; color: var(--ink); }
+  .toggle-row .label-group small { color: var(--ink-dim); font-size: 11px; }
+  .switch { position: relative; width: 38px; height: 21px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch-track {
+    position: absolute; inset: 0; background: var(--line);
+    border-radius: 999px; cursor: pointer;
+  }
+  .switch-track::before {
+    content: ""; position: absolute; width: 15px; height: 15px;
+    left: 3px; top: 3px; background: var(--ink-dim); border-radius: 50%;
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+  .switch input:checked + .switch-track { background: var(--signal-dim); }
+  .switch input:checked + .switch-track::before { transform: translateX(17px); background: var(--signal); }
+  button.primary {
+    width: 100%; background: var(--signal); color: #06120c; border: none;
+    border-radius: 7px; font-family: var(--mono); font-size: 13.5px;
+    font-weight: 600; padding: 13px; cursor: pointer;
+  }
+  button.primary:disabled { background: var(--line); color: var(--ink-dim); }
+  .error-msg { font-family: var(--mono); font-size: 12px; color: var(--error); margin-top: 10px; display: none; white-space: pre-wrap; }
+  #progressPanel { display: none; }
+  .status-line { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 6px; }
+  .status-badge {
+    font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: 0.07em; padding: 4px 9px; border-radius: 5px;
+    background: var(--signal-dim); color: var(--signal);
+  }
+  .status-badge.error { background: #4a1f1f; color: var(--error); }
+  .progress-stats { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
+  .request-counter {
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-dim);
+    opacity: 0.7;
+  }
+  .bar-track { height: 5px; background: var(--line); border-radius: 999px; overflow: hidden; margin-bottom: 14px; }
+  .bar-fill { height: 100%; background: var(--signal); width: 0%; transition: width 0.25s ease; }
+  .log-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .log-title {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--ink-dim);
+  }
+  .copy-log-btn {
+    background: none; border: 1px solid var(--line); color: var(--ink-dim);
+    font-family: var(--mono); font-size: 10.5px; padding: 4px 9px;
+    border-radius: 5px; cursor: pointer;
+  }
+  .copy-log-btn:active { background: var(--line); }
+  .copy-log-btn.copied { color: var(--signal); border-color: var(--signal-dim); }
+  .log-window {
+    font-family: var(--mono); font-size: 11.5px; line-height: 1.6;
+    background: #08090a; border: 1px solid var(--line); border-radius: 7px;
+    padding: 12px 14px; height: 200px; overflow-y: auto; color: var(--ink-dim);
+  }
+  .log-window .line { white-space: pre-wrap; word-break: break-all; }
+  .log-window .line.warn { color: var(--warn); }
+  .log-window .line.err { color: var(--error); }
+  .log-window .line.ok { color: var(--signal); }
+  .download-row { margin-top: 14px; display: none; }
+  .download-row a.dl-btn {
+    display: block; text-align: center; text-decoration: none;
+    background: var(--signal); color: #06120c; font-family: var(--mono);
+    font-weight: 600; font-size: 13.5px; border-radius: 7px; padding: 13px;
+  }
+  .caveat {
+    font-size: 12.5px; color: var(--ink-dim); line-height: 1.6;
+    border-top: 1px solid var(--line); margin-top: 22px; padding-top: 16px;
+  }
+  .caveat strong { color: var(--ink); }
+  .caveat code { background: #0a0c0b; padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="eyebrow"><span class="dot"></span>Site Cloner · Browser-only</div>
+  <h1>Capture a site's <span class="accent">design</span>, no server required.</h1>
+  <p class="sub">Runs entirely in this page. Fetches the target through a public CORS proxy, pulls its CSS/images/fonts, and zips everything for download. Best on simple static sites — heavy JS apps and protected sites may fail.</p>
+
+  <div class="panel">
+    <div class="field">
+      <label for="urlInput">Target URL</label>
+      <input type="url" id="urlInput" placeholder="https://example.com" autocomplete="off" />
+    </div>
+
+    <div class="field">
+      <label for="proxySelect">CORS proxy</label>
+      <div class="proxy-row">
+        <select id="proxySelect">
+          <option value="https://corsproxy.io/?url=">corsproxy.io</option>
+          <option value="https://api.allorigins.win/raw?url=">allorigins.win</option>
+          <option value="https://thingproxy.freeboard.io/fetch/">thingproxy</option>
+          <option value="">None (direct fetch — only works if target allows CORS)</option>
+        </select>
+        <button class="test-proxy-btn" id="testProxyBtn" type="button">Test</button>
+      </div>
+      <div class="proxy-test-result" id="proxyTestResult"></div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="maxPagesInput">Max pages</label>
+        <input type="text" inputmode="numeric" id="maxPagesInput" value="5" />
+      </div>
+      <div class="field">
+        <label for="maxDepthInput">Link depth</label>
+        <input type="text" inputmode="numeric" id="maxDepthInput" value="1" />
+      </div>
+    </div>
+
+    <div class="toggle-row">
+      <div class="label-group">
+        <span>Follow internal links</span>
+        <small>Crawl same-site pages up to Max pages / Link depth above</small>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="followLinks" />
+        <span class="switch-track"></span>
+      </label>
+    </div>
+
+    <button class="primary" id="startBtn">Clone site</button>
+    <div class="error-msg" id="errorMsg"></div>
+  </div>
+
+  <div class="panel" id="progressPanel">
+    <div class="status-line">
+      <span class="status-badge" id="statusBadge">working</span>
+      <span class="progress-stats" id="progressStats">0 assets</span>
+      <span class="request-counter" id="requestCounter">0 requests</span>
+    </div>
+    <div class="bar-track"><div class="bar-fill" id="barFill"></div></div>
+    <div class="log-header">
+      <span class="log-title">Crawl log</span>
+      <button class="copy-log-btn" id="copyLogBtn" type="button">Copy log</button>
+    </div>
+    <div class="log-window" id="logWindow"></div>
+    <div class="download-row" id="downloadRow">
+      <a class="dl-btn" id="downloadLink" href="#">Download .zip</a>
+    </div>
+  </div>
+
+  <p class="caveat">
+    <strong>How this works:</strong> everything runs in your browser tab — there's no backend. Cross-site fetches are routed through a public CORS proxy since browsers block raw cross-origin reads; proxies can be slow, rate-limited, or temporarily down — use the <strong>Test</strong> button to check a proxy is alive before starting a full crawl. If the tool detects rate-limiting mid-crawl it automatically slows down for the rest of the run.<br/><br/>
+    <strong>Limits:</strong> up to 60 assets and 80MB total per clone, to avoid generating a zip too large for a phone browser to handle in memory. Individual files over 8MB are skipped.<br/><br/>
+    <strong>What to expect:</strong> static HTML, CSS (including animations), images and fonts come through reasonably well on simple sites. Sites built with React/Vue/Next.js often render mostly-empty HTML in the raw response (their content is built by JavaScript after load), so a browser-fetch clone — without a real browser engine running the JS — will look incomplete for those. Login-gated content, anti-bot protection, and strict CSP/CORS policies will also block this.
+  </p>
+
+</div>
+
+<script>
+(function () {
+  const startBtn = document.getElementById('startBtn');
+  const urlInput = document.getElementById('urlInput');
+  const proxySelect = document.getElementById('proxySelect');
+  const testProxyBtn = document.getElementById('testProxyBtn');
+  const proxyTestResult = document.getElementById('proxyTestResult');
+  const followLinksInput = document.getElementById('followLinks');
+  const maxPagesInput = document.getElementById('maxPagesInput');
+  const maxDepthInput = document.getElementById('maxDepthInput');
+  const errorMsg = document.getElementById('errorMsg');
+
+  const progressPanel = document.getElementById('progressPanel');
+  const statusBadge = document.getElementById('statusBadge');
+  const progressStats = document.getElementById('progressStats');
+  const barFill = document.getElementById('barFill');
+  const logWindow = document.getElementById('logWindow');
+  const downloadRow = document.getElementById('downloadRow');
+  const downloadLink = document.getElementById('downloadLink');
+  const requestCountEl = document.getElementById('requestCounter');
+
+  const MAX_ASSETS = 60;
+  const MAX_ASSET_BYTES = 8 * 1024 * 1024;
+  const MAX_TOTAL_BYTES = 80 * 1024 * 1024; // overall zip content cap — prevents a tab crash from in-memory zip generation on heavy sites
+  const MAX_PAGES_CEILING = 25; // hard ceiling regardless of what the user types
+  const MAX_DEPTH_CEILING = 5;
+  const FETCH_TIMEOUT_MS = 15000;
+  const PAGE_DELAY_MS = 350; // small pause between page fetches, easier on free proxies
+  const RATE_LIMIT_DELAY_MS = 3000; // longer pause once a 429 is seen, for the rest of the run
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function clampInt(value, min, max, fallback) {
+    const n = parseInt(value, 10);
+    if (Number.isNaN(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+  }
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + 'B';
+    if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + 'KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
+  }
+
+  function setError(msg) {
+    errorMsg.textContent = msg;
+    errorMsg.style.display = msg ? 'block' : 'none';
+  }
+
+  function setBadge(text, kind) {
+    statusBadge.textContent = text;
+    statusBadge.className = 'status-badge' + (kind === 'error' ? ' error' : '');
+  }
+
+  function log(msg, kind) {
+    const div = document.createElement('div');
+    div.className = 'line' + (kind ? ' ' + kind : '');
+    div.textContent = msg;
+    logWindow.appendChild(div);
+    logWindow.scrollTop = logWindow.scrollHeight;
+  }
+
+  function setProgress(done, total, label) {
+    progressStats.textContent = label || (done + ' / ' + total + ' assets');
+    const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+    barFill.style.width = pct + '%';
+  }
+
+  function proxify(url) {
+    const prefix = proxySelect.value;
+    if (!prefix) return url;
+    if (prefix.endsWith('/fetch/')) return prefix + url; // thingproxy appends the raw URL, no encoding
+    return prefix + encodeURIComponent(url);
+  }
+
+  let requestCount = 0;
+  let rateLimited = false; // once true, the crawl loop switches to a longer delay between pages
+
+  async function fetchWithTimeout(url, opts, retryOnFail) {
+    requestCount++;
+    updateRequestCounter();
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, { ...(opts || {}), signal: controller.signal });
+      if (res.status === 429 && !rateLimited) {
+        rateLimited = true;
+        log('Proxy returned HTTP 429 (rate limited) — slowing down for the rest of this run.', 'warn');
+      }
+      return res;
+    } catch (err) {
+      if (retryOnFail !== false) {
+        log('Retrying after fetch error: ' + err.message, 'warn');
+        clearTimeout(t);
+        return fetchWithTimeout(url, opts, false); // one retry only
+      }
+      throw err;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  function updateRequestCounter() {
+    requestCountEl.textContent = requestCount + ' request' + (requestCount === 1 ? '' : 's');
+  }
+
+  // --- proxy reachability test ---
+  // Uses a small, reliable, well-known page as the probe target rather than
+  // the user's actual URL — this answers "is this proxy alive right now"
+  // without depending on whether the target site itself is reachable.
+  const PROXY_TEST_TARGET = 'https://example.com/';
+  const PROXY_TEST_TIMEOUT_MS = 8000;
+
+  async function testCurrentProxy() {
+    const proxyLabel = proxySelect.options[proxySelect.selectedIndex].textContent;
+
+    if (!proxySelect.value) {
+      proxyTestResult.className = 'proxy-test-result fail';
+      proxyTestResult.textContent = 'No proxy selected — direct fetch only works if the target site explicitly allows CORS, which most don\'t. Nothing to test here.';
+      return;
+    }
+
+    proxyTestResult.className = 'proxy-test-result testing';
+    proxyTestResult.textContent = 'Testing ' + proxyLabel + '…';
+    testProxyBtn.disabled = true;
+
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), PROXY_TEST_TIMEOUT_MS);
+    const started = performance.now();
+
+    try {
+      const res = await fetch(proxify(PROXY_TEST_TARGET), { signal: controller.signal });
+      const elapsed = Math.round(performance.now() - started);
+      if (res.ok) {
+        proxyTestResult.className = 'proxy-test-result ok';
+        proxyTestResult.textContent = proxyLabel + ' is reachable (' + elapsed + 'ms).';
+      } else {
+        proxyTestResult.className = 'proxy-test-result fail';
+        proxyTestResult.textContent = proxyLabel + ' responded with HTTP ' + res.status + ' — try another proxy.';
+      }
+    } catch (err) {
+      const reason = err.name === 'AbortError' ? 'timed out' : err.message;
+      proxyTestResult.className = 'proxy-test-result fail';
+      proxyTestResult.textContent = proxyLabel + ' is unreachable (' + reason + ') — try another proxy.';
+    } finally {
+      clearTimeout(t);
+      testProxyBtn.disabled = false;
+    }
+  }
+
+  function guessExt(url, fallback) {
+    try {
+      const path = new URL(url).pathname;
+      const m = path.match(/\.([a-zA-Z0-9]{1,5})$/);
+      return m ? m[1].toLowerCase() : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  // Maps a response's Content-Type header to a file extension. Used as the
+  // primary source of truth for naming when the URL itself has no usable
+  // extension (e.g. hashed CDN paths, query-string-only image endpoints).
+  const MIME_TO_EXT = {
+    'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif',
+    'image/svg+xml': 'svg', 'image/webp': 'webp', 'image/avif': 'avif',
+    'image/x-icon': 'ico', 'image/vnd.microsoft.icon': 'ico',
+    'font/woff2': 'woff2', 'font/woff': 'woff', 'font/ttf': 'ttf', 'font/otf': 'otf',
+    'application/font-woff2': 'woff2', 'application/font-woff': 'woff',
+    'text/css': 'css', 'application/javascript': 'js', 'text/javascript': 'js',
+  };
+
+  function extFromContentType(contentType) {
+    if (!contentType) return null;
+    const mime = contentType.split(';')[0].trim().toLowerCase();
+    return MIME_TO_EXT[mime] || null;
+  }
+
+  // Inspects the first few bytes of a downloaded file against known binary
+  // signatures. This is the fallback of last resort when Content-Type is
+  // missing or unreliable — some CORS proxies strip or mangle headers on
+  // binary responses, so trusting the header alone isn't always enough.
+  async function sniffExtFromBytes(blob) {
+    try {
+      const head = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+      const hex = Array.from(head).map((b) => b.toString(16).padStart(2, '0')).join('');
+
+      if (hex.startsWith('89504e47')) return 'png';
+      if (hex.startsWith('ffd8ff')) return 'jpg';
+      if (hex.startsWith('47494638')) return 'gif';
+      if (hex.startsWith('424d')) return 'bmp';
+      if (hex.startsWith('52494646') && hex.slice(16, 24) === '57454250') return 'webp'; // RIFF....WEBP
+      if (hex.startsWith('00000100')) return 'ico';
+      if (hex.startsWith('3c3f786d6c') || hex.startsWith('3c737667')) return 'svg'; // <?xml or <svg
+      if (hex.startsWith('774f4632')) return 'woff2'; // 'wOF2'
+      if (hex.startsWith('774f4646')) return 'woff';  // 'wOFF'
+      if (hex.startsWith('00010000') || hex.startsWith('4f54544f')) return 'ttf'; // sfnt / OTTO
+
+      // SVG can also start with whitespace/comments before <svg — check as text
+      const text = new TextDecoder().decode(head);
+      if (text.trimStart().startsWith('<svg') || text.trimStart().startsWith('<?xml')) return 'svg';
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  function localAssetPath(absoluteUrl, kind, ext) {
+    const u = new URL(absoluteUrl);
+    const host = u.host.replace(/[^a-z0-9.-]/gi, '_');
+    let name = u.pathname.split('/').filter(Boolean).pop() || 'file';
+    name = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (!/\.[a-zA-Z0-9]{1,5}$/.test(name)) {
+      name += '.' + (ext || guessExt(absoluteUrl, kind === 'css' ? 'css' : kind === 'js' ? 'js' : 'bin'));
+    }
+    return { dir: 'assets/' + kind + '/' + host + '/', name };
+  }
+
+  // --- core asset download ---
+  // Filename is finalized AFTER the response arrives. Extension is resolved
+  // in priority order: (1) Content-Type response header, (2) magic-byte
+  // sniff of the actual downloaded bytes — needed because some CORS proxies
+  // strip or mangle headers on binary responses, so the header alone isn't
+  // always trustworthy — (3) URL path extension, (4) generic fallback by
+  // asset kind. Collisions (two different source URLs resolving to the same
+  // final name in the same folder) are disambiguated with a numeric suffix
+  // rather than silently overwriting one another in the zip.
+  const usedPaths = new Set();
+
+  async function downloadAsset(zip, absoluteUrl, kind, seen, stats) {
+    if (seen.has(absoluteUrl)) return seen.get(absoluteUrl);
+    if (stats.assetCount >= MAX_ASSETS) return null;
+    if (stats.totalBytes >= MAX_TOTAL_BYTES) {
+      if (!stats.totalBytesCapLogged) {
+        log('Reached total size cap (' + Math.round(MAX_TOTAL_BYTES / 1024 / 1024) + 'MB) — remaining assets skipped to avoid an oversized zip.', 'warn');
+        stats.totalBytesCapLogged = true;
+      }
+      return null;
+    }
+
+    try {
+      const res = await fetchWithTimeout(proxify(absoluteUrl));
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+
+      const contentType = res.headers.get('content-type');
+      let ext = extFromContentType(contentType);
+
+      const blob = await res.blob();
+      if (blob.size > MAX_ASSET_BYTES) throw new Error('too large (' + Math.round(blob.size / 1024) + 'KB)');
+      if (stats.totalBytes + blob.size > MAX_TOTAL_BYTES) {
+        throw new Error('would exceed total size cap (' + Math.round(MAX_TOTAL_BYTES / 1024 / 1024) + 'MB) — skipped');
+      }
+
+      // Only bother sniffing bytes if the URL itself has no real extension —
+      // if the URL already ends in .png etc, trust that over a byte sniff.
+      const urlHasExt = /\.[a-zA-Z0-9]{1,5}(\?|$)/.test(absoluteUrl);
+      if (!ext && !urlHasExt) {
+        ext = await sniffExtFromBytes(blob);
+        if (ext) log('Identified file type from content (' + ext + '): ' + absoluteUrl, 'ok');
+      }
+
+      const { dir, name } = localAssetPath(absoluteUrl, kind, ext);
+
+      const finalPath = dedupePath(dir, name);
+      seen.set(absoluteUrl, finalPath);
+      usedPaths.add(finalPath);
+
+      zip.file(finalPath, blob);
+      stats.assetCount++;
+      stats.totalBytes += blob.size;
+      log('Saved ' + kind + ': ' + finalPath + ' (' + Math.round(blob.size / 1024) + 'KB)', 'ok');
+      return finalPath;
+    } catch (err) {
+      log('Failed ' + kind + ' (' + absoluteUrl + '): ' + err.message, 'warn');
+      return null;
+    }
+  }
+
+  function dedupePath(dir, name) {
+    let candidate = dir + name;
+    if (!usedPaths.has(candidate)) return candidate;
+
+    const dotIdx = name.lastIndexOf('.');
+    const base = dotIdx > 0 ? name.slice(0, dotIdx) : name;
+    const ext = dotIdx > 0 ? name.slice(dotIdx) : '';
+    let i = 2;
+    while (usedPaths.has(dir + base + '-' + i + ext)) i++;
+    return dir + base + '-' + i + ext;
+  }
+
+  // --- CSS url()/@import rewriting ---
+  function extractCssRefs(cssText) {
+    const refs = [];
+    const importSpans = [];
+    const importRe = /@import\s+(?:url\()?\s*(['"]?)([^'")]+)\1\s*\)?\s*;?/gi;
+    let m;
+    while ((m = importRe.exec(cssText)) !== null) {
+      refs.push({ raw: m[0], value: m[2].trim(), kind: 'import' });
+      importSpans.push([m.index, m.index + m[0].length]);
+    }
+    const urlRe = /url\(\s*(['"]?)([^'")]+)\1\s*\)/gi;
+    while ((m = urlRe.exec(cssText)) !== null) {
+      const v = m[2].trim();
+      if (v.startsWith('data:')) continue;
+      const insideImport = importSpans.some(([s, e]) => m.index >= s && m.index < e);
+      if (insideImport) continue;
+      refs.push({ raw: m[0], value: v, kind: 'url' });
+    }
+    return refs;
+  }
+
+  async function rewriteCss(cssText, baseUrl, zip, seen, stats) {
+    const refs = extractCssRefs(cssText);
+    let out = cssText;
+    for (const ref of refs) {
+      try {
+        const absolute = new URL(ref.value, baseUrl).toString();
+        const kind = /\.(woff2?|ttf|otf|eot)(\?|$)/i.test(absolute) ? 'font'
+          : /\.css(\?|$)/i.test(absolute) ? 'css' : 'img';
+        const localPath = await downloadAsset(zip, absolute, kind, seen, stats);
+        if (!localPath) continue;
+        const rel = '../../../' + localPath; // assets/css/<host>/file.css -> back to zip root
+        if (ref.kind === 'url') out = out.split(ref.raw).join('url("' + rel + '")');
+        else out = out.split(ref.raw).join('@import url("' + rel + '");');
+      } catch {
+        // skip malformed reference
+      }
+    }
+    return out;
+  }
+
+  // srcset="url1 1x, url2 2x, url3 480w" -> download each candidate URL,
+  // rewrite to a relative path, keep its size/density descriptor intact.
+  async function rewriteSrcset(srcsetValue, baseUrl, zip, seen, stats) {
+    const parts = srcsetValue.split(',').map((p) => p.trim()).filter(Boolean);
+    const rewritten = [];
+    for (const part of parts) {
+      const spaceIdx = part.search(/\s/);
+      const url = spaceIdx === -1 ? part : part.slice(0, spaceIdx);
+      const descriptor = spaceIdx === -1 ? '' : part.slice(spaceIdx + 1).trim();
+      if (!url || url.startsWith('data:')) {
+        rewritten.push(part);
+        continue;
+      }
+      try {
+        const absolute = new URL(url, baseUrl).toString();
+        const localPath = await downloadAsset(zip, absolute, 'img', seen, stats);
+        if (!localPath) {
+          rewritten.push(part);
+          continue;
+        }
+        const rel = '../' + localPath; // pages/index.html -> back to zip root
+        rewritten.push(descriptor ? rel + ' ' + descriptor : rel);
+      } catch {
+        rewritten.push(part);
+      }
+    }
+    return rewritten.join(', ');
+  }
+
+  // --- HTML parsing + rewriting ---
+  async function cloneOnePage(pageUrl, zip, seen, stats, isRoot) {
+    log('Fetching: ' + pageUrl);
+    const res = await fetchWithTimeout(proxify(pageUrl));
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' fetching page');
+    const html = await res.text();
+
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+
+    // <base href> changes what relative URLs on this page resolve against —
+    // if present, use it instead of pageUrl for every relative resolution below.
+    const baseTag = doc.querySelector('base[href]');
+    let resolveBase = pageUrl;
+    if (baseTag) {
+      try {
+        resolveBase = new URL(baseTag.getAttribute('href'), pageUrl).toString();
+        log('Found <base href>: resolving relative URLs against ' + resolveBase);
+      } catch {
+        // malformed base href, fall back to pageUrl
+      }
+    }
+
+    // stylesheets
+    const links = Array.from(doc.querySelectorAll('link[rel="stylesheet"][href]'));
+    for (const el of links) {
+      try {
+        const absolute = new URL(el.getAttribute('href'), resolveBase).toString();
+        const res2 = await fetchWithTimeout(proxify(absolute));
+        if (!res2.ok) throw new Error('HTTP ' + res2.status);
+        let cssText = await res2.text();
+        const localPath = localAssetPath(absolute, 'css');
+        seen.set(absolute, localPath);
+        cssText = await rewriteCss(cssText, absolute, zip, seen, stats);
+        zip.file(localPath, cssText);
+        stats.assetCount++;
+        log('Saved css: ' + localPath, 'ok');
+        el.setAttribute('href', '../' + localPath);
+      } catch (err) {
+        log('Failed stylesheet: ' + err.message, 'warn');
+      }
+    }
+
+    // favicons (rel="icon", "shortcut icon", "apple-touch-icon", etc.)
+    const iconLinks = Array.from(doc.querySelectorAll('link[rel*="icon"][href]'));
+    for (const el of iconLinks) {
+      try {
+        const absolute = new URL(el.getAttribute('href'), resolveBase).toString();
+        const localPath = await downloadAsset(zip, absolute, 'img', seen, stats);
+        if (localPath) el.setAttribute('href', '../' + localPath);
+      } catch {}
+    }
+
+    // images — src, plus common lazy-load attributes sites swap in via JS
+    // (the raw src is often a 1x1 placeholder until a script replaces it,
+    // so without checking these the cloned page would show blank boxes).
+    const LAZY_ATTRS = ['data-src', 'data-lazy-src', 'data-original', 'data-srcset'];
+    const imgs = Array.from(doc.querySelectorAll('img'));
+    for (const el of imgs) {
+      try {
+        const srcAttr = LAZY_ATTRS.find((a) => el.hasAttribute(a) && el.getAttribute(a)) || (el.hasAttribute('src') ? 'src' : null);
+        if (srcAttr && srcAttr !== 'data-srcset') {
+          const absolute = new URL(el.getAttribute(srcAttr), resolveBase).toString();
+          const localPath = await downloadAsset(zip, absolute, 'img', seen, stats);
+          if (localPath) {
+            el.setAttribute('src', '../' + localPath);
+            LAZY_ATTRS.forEach((a) => el.removeAttribute(a));
+          }
+        }
+      } catch {}
+    }
+
+    // srcset on <img> and <source> (responsive images / <picture> elements) —
+    // each candidate URL in the list needs downloading and rewriting separately.
+    const srcsetEls = Array.from(doc.querySelectorAll('img[srcset], source[srcset]'));
+    for (const el of srcsetEls) {
+      try {
+        const rewritten = await rewriteSrcset(el.getAttribute('srcset'), resolveBase, zip, seen, stats);
+        el.setAttribute('srcset', rewritten);
+      } catch {}
+    }
+    // <source> inside <picture> can also use plain src
+    const sourceEls = Array.from(doc.querySelectorAll('source[src]'));
+    for (const el of sourceEls) {
+      try {
+        const absolute = new URL(el.getAttribute('src'), resolveBase).toString();
+        const localPath = await downloadAsset(zip, absolute, 'img', seen, stats);
+        if (localPath) el.setAttribute('src', '../' + localPath);
+      } catch {}
+    }
+
+    // inline SVG <use href="..."> / <use xlink:href="..."> — common pattern
+    // for icon sets and emoji sprite sheets (e.g. Twemoji-style sprites),
+    // where one SVG file is referenced many times via fragment URLs.
+    const useEls = Array.from(doc.querySelectorAll('use'));
+    for (const el of useEls) {
+      try {
+        const hrefAttr = el.hasAttribute('href') ? 'href' : el.hasAttribute('xlink:href') ? 'xlink:href' : null;
+        if (!hrefAttr) continue;
+        const raw = el.getAttribute(hrefAttr);
+        if (!raw || raw.startsWith('#')) continue; // same-document fragment, nothing to fetch
+        const [urlPart, fragment] = raw.split('#');
+        const absolute = new URL(urlPart, resolveBase).toString();
+        const localPath = await downloadAsset(zip, absolute, 'img', seen, stats);
+        if (localPath) el.setAttribute(hrefAttr, '../' + localPath + (fragment ? '#' + fragment : ''));
+      } catch {}
+    }
+
+    // <object data="..."> / <embed src="..."> — occasionally used for SVG icons
+    const objectEls = Array.from(doc.querySelectorAll('object[type="image/svg+xml"][data], embed[src$=".svg"]'));
+    for (const el of objectEls) {
+      try {
+        const attr = el.tagName.toLowerCase() === 'object' ? 'data' : 'src';
+        const absolute = new URL(el.getAttribute(attr), resolveBase).toString();
+        const localPath = await downloadAsset(zip, absolute, 'img', seen, stats);
+        if (localPath) el.setAttribute(attr, '../' + localPath);
+      } catch {}
+    }
+
+    // scripts
+    const scripts = Array.from(doc.querySelectorAll('script[src]'));
+    for (const el of scripts) {
+      try {
+        const absolute = new URL(el.getAttribute('src'), resolveBase).toString();
+        const localPath = await downloadAsset(zip, absolute, 'js', seen, stats);
+        if (localPath) el.setAttribute('src', '../' + localPath);
+      } catch {}
+    }
+
+    // inline style="" with url(...)
+    const styled = Array.from(doc.querySelectorAll('[style*="url("]'));
+    for (const el of styled) {
+      try {
+        const rewritten = await rewriteCss(el.getAttribute('style'), resolveBase, zip, seen, stats);
+        el.setAttribute('style', rewritten);
+      } catch {}
+    }
+
+    const jsRenderWarning = detectLikelyJsRendered(doc, scripts.length);
+    if (jsRenderWarning) {
+      log('Heads up — ' + pageUrl + ': ' + jsRenderWarning, 'warn');
+    }
+
+    const pageName = pageUrlToFileName(pageUrl, isRoot);
+    zip.file('pages/' + pageName, '<!DOCTYPE html>\n' + doc.documentElement.outerHTML);
+    log('Saved page: pages/' + pageName, 'ok');
+    stats.pageCount++;
+
+    const discoveredLinks = extractSameOriginLinks(doc, pageUrl, resolveBase);
+
+    return { doc, pageName, links: discoveredLinks };
+  }
+
+  function pageUrlToFileName(pageUrl, isRoot) {
+    if (isRoot) return 'index.html';
+    const u = new URL(pageUrl);
+    let p = u.pathname.replace(/^\/|\/$/g, '');
+    if (!p) return 'index.html';
+    const safe = p.replace(/[^a-zA-Z0-9]+/g, '_');
+    return safe + '.html';
+  }
+
+  // Returns a short warning string if the page looks like it depends on
+  // client-side JS to render its real content (common for React/Vue/Next.js
+  // sites), or null if the page looks like normal server-rendered HTML.
+  function detectLikelyJsRendered(doc, scriptCount) {
+    const bodyText = (doc.body && doc.body.textContent || '').replace(/\s+/g, ' ').trim();
+    const elementCount = doc.body ? doc.body.querySelectorAll('*').length : 0;
+    const hasRootDiv = !!doc.querySelector('#root, #app, #__next, #__nuxt');
+
+    const looksEmpty = bodyText.length < 200 && elementCount < 15;
+    const looksLikeKnownFramework = hasRootDiv && elementCount < 10;
+
+    if (looksLikeKnownFramework) {
+      return 'page body is a near-empty mount point (#root/#app/#__next) — this is almost certainly a JS-rendered app; the cloned HTML will likely look blank.';
+    }
+    if (looksEmpty && scriptCount > 0) {
+      return 'page has very little text/markup but ' + scriptCount + ' script tag(s) — content is likely built by JavaScript after load, so this clone may look incomplete.';
+    }
+    return null;
+  }
+
+  function extractSameOriginLinks(doc, pageUrl, resolveBase) {
+    const origin = new URL(pageUrl).origin;
+    const base = resolveBase || pageUrl;
+    const out = new Set();
+    Array.from(doc.querySelectorAll('a[href]')).forEach((a) => {
+      const href = a.getAttribute('href');
+      if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:')) return;
+      try {
+        const abs = new URL(href, base).toString();
+        const u = new URL(abs);
+        u.hash = '';
+        if (u.origin === origin) out.add(u.toString());
+      } catch {}
+    });
+    return Array.from(out);
+  }
+
+  async function startClone() {
+    setError('');
+    const rawUrl = urlInput.value.trim();
+    if (!rawUrl) { setError('Enter a URL to clone.'); return; }
+
+    let parsed;
+    try {
+      parsed = new URL(rawUrl);
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error();
+    } catch {
+      setError('Enter a valid URL, including https://');
+      return;
+    }
+
+    const maxPages = clampInt(maxPagesInput.value, 1, MAX_PAGES_CEILING, 5);
+    const maxDepth = clampInt(maxDepthInput.value, 0, MAX_DEPTH_CEILING, 1);
+    saveSettings();
+
+    startBtn.disabled = true;
+    startBtn.textContent = 'Cloning…';
+    progressPanel.style.display = 'block';
+    downloadRow.style.display = 'none';
+    logWindow.innerHTML = '';
+    requestCount = 0;
+    rateLimited = false;
+    updateRequestCounter();
+    setBadge('working');
+    setProgress(0, maxPages, '0 / ' + maxPages + ' pages');
+
+    const zip = new JSZip();
+    const seen = new Map();
+    const stats = { assetCount: 0, pageCount: 0, totalBytes: 0 };
+    let pageDelayMs = PAGE_DELAY_MS;
+
+    try {
+      const startUrl = parsed.toString();
+      const visited = new Set([startUrl]);
+      const queue = [{ url: startUrl, depth: 0, isRoot: true }];
+      let isFirstPage = true;
+
+      while (queue.length > 0 && stats.pageCount < maxPages) {
+        if (!isFirstPage) {
+          await sleep(rateLimited ? RATE_LIMIT_DELAY_MS : pageDelayMs);
+        }
+        isFirstPage = false;
+
+        const item = queue.shift();
+        let result;
+        try {
+          result = await cloneOnePage(item.url, zip, seen, stats, item.isRoot);
+        } catch (err) {
+          log('Failed page ' + item.url + ': ' + err.message, 'warn');
+          continue;
+        }
+        setProgress(stats.pageCount, maxPages, stats.pageCount + ' / ' + maxPages + ' pages');
+
+        if (!followLinksInput.checked) continue;
+        if (item.depth >= maxDepth) continue;
+        if (stats.pageCount >= maxPages) break;
+
+        for (const link of result.links) {
+          if (visited.has(link)) continue;
+          if (visited.size >= maxPages) break; // cap queueing once we've got enough candidates
+          visited.add(link);
+          queue.push({ url: link, depth: item.depth + 1, isRoot: false });
+        }
+      }
+
+      if (followLinksInput.checked) {
+        log('Crawl finished: visited ' + stats.pageCount + ' page(s) (max pages ' + maxPages + ', depth ' + maxDepth + ').');
+      }
+
+      const manifest = {
+        sourceUrl: parsed.toString(),
+        clonedAt: new Date().toISOString(),
+        pageCount: stats.pageCount,
+        assetCount: stats.assetCount,
+        assetBytes: stats.totalBytes,
+        options: { maxPages, maxDepth, followLinks: followLinksInput.checked },
+        note: 'Cloned client-side via browser fetch + CORS proxy. JS-rendered content may be missing.',
+      };
+      zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+
+      log('Packaging zip…');
+      setBadge('packaging');
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const blobUrl = URL.createObjectURL(blob);
+
+      downloadLink.href = blobUrl;
+      downloadLink.download = parsed.host + '-clone.zip';
+      downloadRow.style.display = 'block';
+      setBadge('done');
+      const sizeLabel = formatBytes(stats.totalBytes);
+      setProgress(stats.pageCount, maxPages, stats.pageCount + ' pages · ' + stats.assetCount + ' assets · ' + sizeLabel);
+      log('Done. ' + stats.pageCount + ' page(s), ' + stats.assetCount + ' asset(s), ' + sizeLabel + ' total.', 'ok');
+    } catch (err) {
+      setBadge('error', 'error');
+      const hint = (err.message || '').toLowerCase().includes('failed to fetch')
+        ? '\nThis usually means the CORS proxy blocked or timed out the request — try the other proxy option above.'
+        : '';
+      setError('Clone failed: ' + err.message + hint);
+      log('Fatal: ' + err.message, 'err');
+    } finally {
+      startBtn.disabled = false;
+      startBtn.textContent = 'Clone site';
+    }
+  }
+
+  startBtn.addEventListener('click', startClone);
+  urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') startClone(); });
+
+  testProxyBtn.addEventListener('click', testCurrentProxy);
+  proxySelect.addEventListener('change', () => {
+    proxyTestResult.className = 'proxy-test-result';
+    proxyTestResult.textContent = '';
+  });
+
+  // --- copy log to clipboard ---
+  const copyLogBtn = document.getElementById('copyLogBtn');
+  copyLogBtn.addEventListener('click', async () => {
+    const text = Array.from(logWindow.querySelectorAll('.line')).map((el) => el.textContent).join('\n');
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Clipboard API unavailable (older WebView) — fall back to a manual select
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch {}
+      document.body.removeChild(ta);
+    }
+    copyLogBtn.textContent = 'Copied';
+    copyLogBtn.classList.add('copied');
+    setTimeout(() => {
+      copyLogBtn.textContent = 'Copy log';
+      copyLogBtn.classList.remove('copied');
+    }, 1500);
+  });
+
+  // --- remember last-used URL + settings ---
+  const SETTINGS_KEY = 'site-cloner-settings';
+
+  function loadSettings() {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      if (s.url) urlInput.value = s.url;
+      if (s.proxy) proxySelect.value = s.proxy;
+      if (s.maxPages) maxPagesInput.value = s.maxPages;
+      if (s.maxDepth !== undefined) maxDepthInput.value = s.maxDepth;
+      if (s.followLinks !== undefined) followLinksInput.checked = s.followLinks;
+    } catch {
+      // corrupted or inaccessible storage — ignore, just start fresh
+    }
+  }
+
+  function saveSettings() {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+        url: urlInput.value.trim(),
+        proxy: proxySelect.value,
+        maxPages: maxPagesInput.value,
+        maxDepth: maxDepthInput.value,
+        followLinks: followLinksInput.checked,
+      }));
+    } catch {
+      // storage unavailable or full — non-critical, skip silently
+    }
+  }
+
+  loadSettings();
+})();
+</script>
+</body>
+</html>
