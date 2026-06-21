@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Site Cloner</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #0c0e0d; --panel: #131615; --line: #232b27;
+    --ink: #e9eee9; --ink-dim: #8a9690;
+    --signal: #5ef2a3; --signal-dim: #2c5c43;
+    --warn: #f2b35e; --error: #f25e5e;
+    --mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); min-height: 100vh; }
+
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes dotPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+  .wrap { max-width: 760px; margin: 0 auto; padding: 32px 18px 60px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; color: var(--signal);
+    text-transform: uppercase; display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+    animation: fadeUp 0.5s ease both;
+  }
+  .eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--signal); animation: dotPulse 2s ease-in-out infinite; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 10px; font-weight: 650; animation: fadeUp 0.5s ease 0.06s both; }
+  h1 .accent { color: var(--signal); }
+  .sub { color: var(--ink-dim); font-size: 13.5px; line-height: 1.55; margin: 0 0 20px; animation: fadeUp 0.5s ease 0.12s both; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 18px; animation: fadeUp 0.5s ease 0.16s both; }
+  .tab-btn {
+    flex: 1; background: var(--panel); border: 1px solid var(--line); color: var(--ink-dim);
+    font-family: var(--mono); font-size: 11.5px; padding: 10px 8px; border-radius: 7px; cursor: pointer;
+  }
+  .tab-btn.active { background: var(--signal-dim); border-color: var(--signal-dim); color: var(--signal); }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 16px; animation: fadeUp 0.5s ease 0.2s both; }
+  .mode-view { display: none; }
+  .mode-view.active { display: block; }
+
+  label { display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 7px; }
+  input[type="text"], input[type="url"], select {
+    width: 100%; background: #0a0c0b; border: 1px solid var(--line); border-radius: 7px;
+    color: var(--ink); font-family: var(--mono); font-size: 13px; padding: 11px 12px; outline: none;
+  }
+  select { -webkit-appearance: none; appearance: none; }
+  .field { margin-bottom: 14px; }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .field-row .field { margin-bottom: 14px; }
+
+  .proxy-row { display: flex; gap: 8px; }
+  .proxy-row select { flex: 1; }
+  .test-proxy-btn {
+    background: #0a0c0b; border: 1px solid var(--line); color: var(--ink-dim);
+    font-family: var(--mono); font-size: 12.5px; padding: 0 16px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+  }
+  .test-proxy-btn:disabled { opacity: 0.6; }
+  .proxy-test-result { font-family: var(--mono); font-size: 11.5px; margin-top: 8px; min-height: 16px; display: none; }
+  .proxy-test-result.ok { color: var(--signal); display: block; }
+  .proxy-test-result.fail { color: var(--error); display: block; }
+  .proxy-test-result.testing { color: var(--ink-dim); display: block; }
+
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 11px 12px; background: #0a0c0b; border: 1px solid var(--line); border-radius: 7px; margin-bottom: 14px; }
+  .toggle-row .label-group { display: flex; flex-direction: column; gap: 2px; }
+  .toggle-row .label-group span:first-child { font-size: 12.5px; color: var(--ink); }
+  .toggle-row .label-group small { color: var(--ink-dim); font-size: 11px; }
+  .switch { position: relative; width: 38px; height: 21px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch-track { position: absolute; inset: 0; background: var(--line); border-radius: 999px; cursor: pointer; }
+  .switch-track::before { content: ""; position: absolute; width: 15px; height: 15px; left: 3px; top: 3px; background: var(--ink-dim); border-radius: 50%; transition: transform 0.15s ease, background 0.15s ease; }
+  .switch input:checked + .switch-track { background: var(--signal-dim); }
+  .switch input:checked + .switch-track::before { transform: translateX(17px); background: var(--signal); }
+
+  button.primary { width: 100%; background: var(--signal); color: #06120c; border: none; border-radius: 7px; font-family: var(--mono); font-size: 13.5px; font-weight: 600; padding: 13px; cursor: pointer; }
+  button.primary:disabled { background: var(--line); color: var(--ink-dim); }
+  .error-msg { font-family: var(--mono); font-size: 12px; color: var(--error); margin-top: 10px; display: none; white-space: pre-wrap; }
+
+  #progressPanel { display: none; }
+  .status-line { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 6px; }
+  .status-badge { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em; padding: 4px 9px; border-radius: 5px; background: var(--signal-dim); color: var(--signal); }
+  .status-badge.error { background: #4a1f1f; color: var(--error); }
+  .progress-stats { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
+  .request-counter { font-family: var(--mono); font-size: 10.5px; color: var(--ink-dim); opacity: 0.7; }
+  .bar-track { height: 5px; background: var(--line); border-radius: 999px; overflow: hidden; margin-bottom: 14px; }
+  .bar-fill { height: 100%; background: var(--signal); width: 0%; transition: width 0.25s ease; }
+
+  .log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .log-title { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-dim); }
+  .copy-log-btn { background: none; border: 1px solid var(--line); color: var(--ink-dim); font-family: var(--mono); font-size: 10.5px; padding: 4px 9px; border-radius: 5px; cursor: pointer; }
+  .copy-log-btn.copied { color: var(--signal); border-color: var(--signal-dim); }
+  .log-window { font-family: var(--mono); font-size: 11.5px; line-height: 1.6; background: #08090a; border: 1px solid var(--line); border-radius: 7px; padding: 12px 14px; height: 200px; overflow-y: auto; color: var(--ink-dim); }
+  .log-window .line { white-space: pre-wrap; word-break: break-all; }
+  .log-window .line.warn { color: var(--warn); }
+  .log-window .line.err { color: var(--error); }
+  .log-window .line.ok { color: var(--signal); }
+
+  .download-row { margin-top: 14px; display: none; flex-direction: column; gap: 8px; }
+  .download-row a.dl-btn, .download-row button.dl-btn {
+    display: block; width: 100%; text-align: center; text-decoration: none;
+    background: var(--signal); color: #06120c; font-family: var(--mono); font-weight: 600;
+    font-size: 13.5px; border-radius: 7px; padding: 13px; border: none; cursor: pointer;
+  }
+  .download-row .preview-btn { background: #0a0c0b; border: 1px solid var(--line); color: var(--ink); }
+
+  .preview-frame-wrap { display: none; margin-top: 14px; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .preview-frame-wrap iframe { width: 100%; height: 360px; border: none; background: #fff; }
+
+  .caveat { font-size: 12.5px; color: var(--ink-dim); line-height: 1.6; border-top: 1px solid var(--line); margin-top: 22px; padding-top: 16px; animation: fadeUp 0.5s ease 0.24s both; }
+  .caveat strong { color: var(--ink); }
+  .caveat code { background: #0a0c0b; padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="eyebrow"><span class="dot"></span>Site Cloner · Browser-only</div>
+  <h1>Capture a site's <span class="accent">design</span>, no server required.</h1>
+  <p class="sub">Runs entirely in this page via a CORS proxy. Three modes: clone a full site, extract one component, or compare two sites side by side.</p>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-mode="clone">Clone</button>
+    <button class="tab-btn" data-mode="component">Component</button>
+    <button class="tab-btn" data-mode="compare">Compare</button>
+  </div>
+
+  <!-- shared proxy selector, used by all three modes -->
+  <div class="panel">
+    <div class="field">
+      <label for="proxySelect">CORS proxy</label>
+      <div class="proxy-row">
+        <select id="proxySelect"></select>
+        <button class="test-proxy-btn" id="testProxyBtn" type="button">Test</button>
+      </div>
+      <div class="proxy-test-result" id="proxyTestResult"></div>
+    </div>
+  </div>
+
+  <!-- CLONE MODE -->
+  <div class="mode-view active" id="view-clone">
+    <div class="panel">
+      <div class="field">
+        <label for="urlInput">Target URL</label>
+        <input type="url" id="urlInput" placeholder="https://example.com" autocomplete="off" />
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="maxPagesInput">Max pages</label>
+          <input type="text" inputmode="numeric" id="maxPagesInput" value="5" />
+        </div>
+        <div class="field">
+          <label for="maxDepthInput">Link depth</label>
+          <input type="text" inputmode="numeric" id="maxDepthInput" value="1" />
+        </div>
+      </div>
+
+      <div class="toggle-row">
+        <div class="label-group">
+          <span>Use sitemap.xml</span>
+          <small>Seed pages from the site's sitemap if one exists — often more complete than link-following</small>
+        </div>
+        <label class="switch"><input type="checkbox" id="useSitemap" /><span class="switch-track"></span></label>
+      </div>
+
+      <div class="toggle-row">
+        <div class="label-group">
+          <span>Follow internal links</span>
+          <small>Crawl same-site pages up to Max pages / Link depth above</small>
+        </div>
+        <label class="switch"><input type="checkbox" id="followLinks" /><span class="switch-track"></span></label>
+      </div>
+
+      <button class="primary" id="startBtn">Clone site</button>
+      <div class="error-msg" id="errorMsg"></div>
+    </div>
+  </div>
+
+  <!-- COMPONENT MODE -->
+  <div class="mode-view" id="view-component">
+    <div class="panel">
+      <div class="field">
+        <label for="compUrlInput">Page URL</label>
+        <input type="url" id="compUrlInput" placeholder="https://example.com/pricing" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="compSelectorInput">CSS selector</label>
+        <input type="text" id="compSelectorInput" placeholder=".pricing-card, header, #hero" autocomplete="off" />
+      </div>
+      <button class="primary" id="compStartBtn">Extract component</button>
+      <div class="error-msg" id="compErrorMsg"></div>
+    </div>
+  </div>
+
+  <!-- COMPARE MODE -->
+  <div class="mode-view" id="view-compare">
+    <div class="panel">
+      <div class="field">
+        <label for="cmpUrlAInput">Site A URL</label>
+        <input type="url" id="cmpUrlAInput" placeholder="https://example.com" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="cmpUrlBInput">Site B URL</label>
+        <input type="url" id="cmpUrlBInput" placeholder="https://competitor.com" autocomplete="off" />
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="cmpMaxPagesInput">Max pages each</label>
+          <input type="text" inputmode="numeric" id="cmpMaxPagesInput" value="3" />
+        </div>
+        <div class="field">
+          <label for="cmpMaxDepthInput">Link depth</label>
+          <input type="text" inputmode="numeric" id="cmpMaxDepthInput" value="1" />
+        </div>
+      </div>
+      <button class="primary" id="cmpStartBtn">Compare sites</button>
+      <div class="error-msg" id="cmpErrorMsg"></div>
+    </div>
+  </div>
+
+  <!-- shared progress/log/download panel -->
+  <div class="panel" id="progressPanel">
+    <div class="status-line">
+      <span class="status-badge" id="statusBadge">working</span>
+      <span class="progress-stats" id="progressStats">0 assets</span>
+      <span class="request-counter" id="requestCounter">0 requests</span>
+    </div>
+    <div class="bar-track"><div class="bar-fill" id="barFill"></div></div>
+    <div class="log-header">
+      <span class="log-title">Log</span>
+      <button class="copy-log-btn" id="copyLogBtn" type="button">Copy log</button>
+    </div>
+    <div class="log-window" id="logWindow"></div>
+    <div class="download-row" id="downloadRow">
+      <button class="dl-btn preview-btn" id="previewBtn" type="button">Preview before download</button>
+      <a class="dl-btn" id="downloadLink" href="#">Download .zip</a>
+    </div>
+    <div class="preview-frame-wrap" id="previewFrameWrap">
+      <iframe id="previewFrame" title="Cloned page preview" sandbox=""></iframe>
+    </div>
+  </div>
+
+  <p class="caveat">
+    <strong>How this works:</strong> everything runs in your browser tab — there's no backend. Cross-site fetches are routed through a public CORS proxy; use <strong>Test</strong> to check one is alive before a full crawl. The crawler auto-detects rate-limiting and slows down for the rest of a run.<br/><br/>
+    <strong>Limits:</strong> up to 60 assets and 80MB total per clone. Individual files over 8MB are skipped.<br/><br/>
+    <strong>What to expect:</strong> static HTML/CSS/images/fonts clone well. React/Vue/Next.js sites often render mostly-empty HTML in the raw response since their content is built by JavaScript after load — this tool fetches HTML but doesn't execute JS, so those sites will look incomplete. Login-gated and anti-bot-protected sites will also block this.
+  </p>
+
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
